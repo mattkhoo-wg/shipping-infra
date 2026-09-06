@@ -1,0 +1,37 @@
+[Unit]
+Description=crewreg backend API
+Documentation=https://github.com/{{GITHUB_REPO}}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=crewreg
+Group=crewreg
+WorkingDirectory=/opt/crewreg
+# CONFIG_PATH is the ONLY environment variable the binary reads (ADR 0015). It
+# holds a path; the secrets are fetched from Secrets Manager via the instance role.
+Environment=CONFIG_PATH=/etc/crewreg/config.yaml
+ExecStart=/opt/crewreg/current/server
+Restart=always
+RestartSec=3
+# 15 s graceful shutdown in the binary, then systemd's own stop timeout.
+TimeoutStopSec=20
+# Plain file so the CloudWatch agent can tail it; rotated by logrotate.
+StandardOutput=append:/var/log/crewreg/server.log
+StandardError=append:/var/log/crewreg/server.log
+LimitNOFILE=65536
+
+# Hardening. The process needs its binary (read), its config (read), a private
+# /tmp for multipart uploads and pdftoppm output, and outbound network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/log/crewreg
+
+[Install]
+WantedBy=multi-user.target

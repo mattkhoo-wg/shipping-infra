@@ -1,0 +1,32 @@
+# TLS termination for the crewreg API. Caddy obtains and renews a Let's Encrypt
+# certificate for the hostname below on its own; port 80 exists only for the
+# ACME challenge and the redirect to HTTPS. The binary itself listens on
+# 127.0.0.1:8080 and speaks plain HTTP.
+{
+	email {{ACME_EMAIL}}
+}
+
+{{API_HOST}} {
+	encode zstd gzip
+
+	# The backend caps one CV upload at 15 MiB (cvintake.MaxBytes). Slightly
+	# above that so the backend, not the proxy, is the one that says "too large".
+	request_body {
+		max_size 16MB
+	}
+
+	reverse_proxy 127.0.0.1:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format json
+	}
+}

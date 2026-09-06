@@ -1,0 +1,27 @@
+{
+  "name": "shipping-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS infrastructure (CDK) for the crewreg backend: one EC2 instance, one RDS Postgres, secrets, artifacts bucket, GitHub OIDC deploy role.",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "jest",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.4.1",
+    "aws-cdk": "^2.1140.0",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12",
+    "tsx": "^4.23.13",
+    "typescript": "~5.9.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.268.0",
+    "cdk-nag": "^2.38.2",
+    "constructs": "^10.8.1"
+  }
+}

@@ -1,0 +1,19 @@
+# CDK
+cdk.out/
+*.js
+!jest.config.js
+*.d.ts
+node_modules/
+
+# local only
+.env
+*.local
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# test output
+coverage/
