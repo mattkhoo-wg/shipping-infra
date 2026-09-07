@@ -7,6 +7,7 @@ and a budget alert, all in `us-east-2` (Ohio).
 
 - `docs/deployment-plan.md`: the plan as approved before this was built.
 - `docs/deployment-architecture.md`: what is deployed and how it fits together.
+- `docs/operator-guide.md`: the how for an administrator: accounts, deploys, logs, secrets, DNS, costs.
 - The backend's own ADR 0022 records the deployment shape from its side.
 
 ## Layout
