@@ -15,10 +15,12 @@ if [ "${2:-}" = "--no-restart" ]; then
   restart=false
 fi
 secret_name="${env_name}/llm"
-stack="crewreg-${env_name}-app"
-
-region="$(aws cloudformation describe-stacks --stack-name "${stack}" \
-  --query "Stacks[0].Outputs[?OutputKey=='Region'].OutputValue" --output text)"
+# The region comes from cdk.json (context.crewreg.<env>.region), the same
+# source the stacks are deployed with, so no lookup below can go to the wrong
+# region because of a profile default.
+infra_dir="$(cd "$(dirname "$0")/.." && pwd)"
+py="$(command -v python3 || command -v python)"
+region="$("$py" -c 'import json, sys; print(json.load(open(sys.argv[1]))["context"]["crewreg"][sys.argv[2]]["region"])' "$infra_dir/cdk.json" "$env_name")"
 export AWS_DEFAULT_REGION="${region}"
 
 key="${LLM_API_KEY:-}"
