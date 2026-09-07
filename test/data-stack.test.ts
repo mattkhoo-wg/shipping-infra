@@ -54,7 +54,7 @@ describe('DataStack', () => {
     template.hasResourceProperties('AWS::SecretsManager::Secret', {
       Name: 'dev/database',
       GenerateSecretString: {
-        SecretStringTemplate: JSON.stringify({ user: 'crew', dbname: 'crewreg', port: 5432, sslmode: 'require' }),
+        SecretStringTemplate: JSON.stringify({ user: 'crew', username: 'crew', dbname: 'crewreg', port: 5432, sslmode: 'require' }),
         GenerateStringKey: 'password',
         PasswordLength: 32,
         ExcludePunctuation: true,

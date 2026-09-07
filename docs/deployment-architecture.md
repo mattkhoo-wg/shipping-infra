@@ -176,7 +176,7 @@ tags of the backend's config structs.
 
 | Secret | Keys | Origin of each value |
 |---|---|---|
-| `dev/database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` (+ `engine`, `dbInstanceIdentifier`, ignored) | `password` generated (32 alphanumerics, no punctuation because the backend builds an unquoted DSN); `user`, `dbname`, `sslmode` fixed; `host`, `port` attached by RDS after creation |
+| `dev/database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` (+ `username`, `engine`, `dbInstanceIdentifier`, ignored by the backend) | `password` generated (32 alphanumerics, no punctuation because the backend builds an unquoted DSN); `user`, `dbname`, `sslmode` fixed; `username` duplicates `user` because RDS refuses to attach a secret without that exact key; `host`, `port` attached by RDS after creation |
 | `dev/auth` | `signing_key` | generated, 64 alphanumerics (backend minimum 32 bytes) |
 | `dev/llm` | `provider`, `text_model`, `vision_model`, `max_tokens`, `api_key` | first four from `cdk.json`; `api_key` generated as a placeholder and replaced once by `scripts/set-llm-key.sh` |
 

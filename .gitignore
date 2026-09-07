@@ -17,3 +17,6 @@ node_modules/
 
 # test output
 coverage/
+
+# per-deploy outputs (non-secret, but change every deploy)
+cdk-outputs.json
