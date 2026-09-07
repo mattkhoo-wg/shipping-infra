@@ -19,8 +19,7 @@ secret_name="${env_name}/llm"
 # source the stacks are deployed with, so no lookup below can go to the wrong
 # region because of a profile default.
 infra_dir="$(cd "$(dirname "$0")/.." && pwd)"
-py="$(command -v python3 || command -v python)"
-region="$("$py" -c 'import json, sys; print(json.load(open(sys.argv[1]))["context"]["crewreg"][sys.argv[2]]["region"])' "$infra_dir/cdk.json" "$env_name")"
+region="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).context.crewreg[process.argv[1]].region))' "$env_name" < "$infra_dir/cdk.json")"
 export AWS_DEFAULT_REGION="${region}"
 
 key="${LLM_API_KEY:-}"
@@ -33,17 +32,14 @@ if [ -z "${key}" ]; then
   exit 1
 fi
 
-py="$(command -v python3 || command -v python)"
 current="$(aws secretsmanager get-secret-value --secret-id "${secret_name}" --query SecretString --output text)"
-updated="$(LLM_API_KEY="${key}" "${py}" -c '
-import json, os, sys
-doc = json.loads(sys.stdin.read())
-doc["api_key"] = os.environ["LLM_API_KEY"]
-print(json.dumps(doc))
-' <<<"${current}")"
+# The key travels through the environment, never an argument, so it is not in
+# the process list or the shell history.
+updated="$(LLM_API_KEY="${key}" node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const o=JSON.parse(d);o.api_key=process.env.LLM_API_KEY;process.stdout.write(JSON.stringify(o))})' <<<"${current}")"
 
 aws secretsmanager put-secret-value --secret-id "${secret_name}" --secret-string "${updated}" >/dev/null
-echo "set-llm-key: ${secret_name} updated (provider=$("${py}" -c 'import json,sys; print(json.loads(sys.stdin.read())["provider"])' <<<"${updated}"))"
+provider="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).provider))' <<<"${updated}")"
+echo "set-llm-key: ${secret_name} updated (provider=${provider})"
 
 # This restart uses the generic AWS-RunShellScript document on purpose: the
 # caller is an operator with their own credentials, not the deploy role, which
