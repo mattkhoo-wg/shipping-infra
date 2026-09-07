@@ -18,7 +18,7 @@
   "context": {
     "crewreg": {
       "dev": {
-        "region": "ap-south-1",
+        "region": "us-east-2",
         "apiHost": "api-dev.aucto.io",
         "acmeEmail": "mattkhoo1234@gmail.com",
         "budgetEmail": "mattkhoo1234@gmail.com",
