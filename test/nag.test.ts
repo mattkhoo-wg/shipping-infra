@@ -6,10 +6,11 @@ import { synthesizeEnvironment } from './helpers';
 // unsuppressed error. This test makes that gate part of `npm test`, so a new
 // finding is seen here first with its rule id and path.
 describe('cdk-nag AwsSolutions', () => {
-  const { oidc, data, appStack } = synthesizeEnvironment();
+  const { oidc, dns, data, appStack } = synthesizeEnvironment();
 
   test.each([
     ['github-oidc', oidc],
+    ['dns', dns!],
     ['data', data],
     ['app', appStack],
   ])('%s stack has no unsuppressed errors', (_name, stack) => {
@@ -20,6 +21,7 @@ describe('cdk-nag AwsSolutions', () => {
 
   test.each([
     ['github-oidc', oidc],
+    ['dns', dns!],
     ['data', data],
     ['app', appStack],
   ])('%s stack has no unsuppressed warnings', (_name, stack) => {

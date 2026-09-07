@@ -5,7 +5,12 @@ what `npx cdk deploy --all` creates for one environment and how a release
 travels from a git commit to a running process. Where it disagrees with the
 plan, this document is right.
 
-Two deliberate deviations from the plan. The first, from the owner on
+Three deliberate deviations from the plan. The third, from the owner on
+2026-09-07: DNS moved from Namecheap's own servers to a Route 53 hosted zone
+(`crewreg-dns` stack, $0.50/month) so the API record is managed by the stack
+and the Amplify frontend can share the domain.
+
+The first two: The first, from the owner on
 2026-09-07: the region is `us-east-2` (Ohio), not `ap-south-1` (Mumbai). The
 plan picked Mumbai for data residency; the owner chose Ohio, which is also about
 $5/month cheaper. India's DPDP Act permits transfers to any country not on a
@@ -44,7 +49,7 @@ flowchart LR
     SSM[SSM Run Command]
     CW[CloudWatch Logs]
   end
-  DNS[Namecheap A record<br/>api.example.com -> EIP]
+  DNS[Route 53 zone aucto.io<br/>api-dev A -> EIP]
   LLM[Gemini API]
 
   FE -- HTTPS + CORS --> DNS --> EC2
@@ -66,6 +71,7 @@ name, tag and secret name.
 | Stack | Holds | Why separate |
 |---|---|---|
 | `crewreg-github-oidc` | The `token.actions.githubusercontent.com` OIDC provider | One per account; a second environment reuses it |
+| `crewreg-dns` | The Route 53 public hosted zone for `aucto.io` | One per account, shared by every environment and by the Amplify frontend; retained on delete so a teardown cannot break the domain |
 | `crewreg-dev-data` | VPC, database security group, RDS instance, the three secrets | Stateful. Nothing here is replaced casually; `prod` gets termination protection |
 | `crewreg-dev-app` | API security group, instance role, instance, Elastic IP, artifacts bucket, log groups, the `crewreg-dev-deploy` SSM document, GitHub deploy role, budget | Stateless. The instance is replaced whenever its bootstrap changes |
 
@@ -243,8 +249,11 @@ and the workflow cannot read secrets or open a shell.
 ## Edge
 
 Caddy holds the certificate for `apiHost` from Let's Encrypt, renews it, and
-redirects 80 to 443. The DNS `A` record lives in Namecheap and is created by
-hand from the `ElasticIp` output. Caddy adds `Strict-Transport-Security`,
+redirects 80 to 443. DNS is a Route 53 hosted zone created by the `crewreg-dns`
+stack; Namecheap only delegates to its four nameservers. The app stack writes
+the `A` record for `apiHost` (TTL 5 minutes) pointing at the Elastic IP, so a
+replaced instance needs no DNS change. The frontend's custom domain is added
+from the Amplify console, which writes its own records into the same zone. Caddy adds `Strict-Transport-Security`,
 removes the `Server` header, compresses responses, and caps request bodies at
 16 MB, just above the backend's own 15 MiB upload limit so the backend is the
 one that answers 413.

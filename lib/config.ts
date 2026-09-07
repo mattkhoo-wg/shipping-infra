@@ -60,6 +60,12 @@ export interface EnvironmentConfig {
   readonly instanceType: string;
   /** Optional AMI pin. When absent the latest Amazon Linux 2023 is looked up once and cached in cdk.context.json. */
   readonly amiId?: string;
+  /**
+   * Optional Route 53 public hosted zone to create and manage, e.g. `example.com`.
+   * When set, `apiHost` must be inside it and the app stack writes its A record;
+   * when absent, the A record is the operator's job at the registrar.
+   */
+  readonly hostedZoneName?: string;
   readonly llm: LlmSettings;
   readonly extract: ExtractSettings;
 }
@@ -153,6 +159,17 @@ export function validateEnvironmentConfig(envName: string, raw: unknown): Enviro
     amiId = raw.amiId;
   }
 
+  let hostedZoneName: string | undefined;
+  if (raw.hostedZoneName !== undefined) {
+    if (typeof raw.hostedZoneName !== 'string' || !HOSTNAME_RE.test(raw.hostedZoneName.toLowerCase())) {
+      throw new Error(`${at('hostedZoneName')} must be a DNS name such as example.com`);
+    }
+    hostedZoneName = raw.hostedZoneName.toLowerCase();
+    if (apiHost !== hostedZoneName && !apiHost.endsWith(`.${hostedZoneName}`)) {
+      throw new Error(`${at('apiHost')} "${apiHost}" is not inside hostedZoneName "${hostedZoneName}"`);
+    }
+  }
+
   const llm = validateLlm(raw.llm, (f) => at(`llm.${f}`));
   const extract = validateExtract(raw.extract, (f) => at(`extract.${f}`));
 
@@ -167,6 +184,7 @@ export function validateEnvironmentConfig(envName: string, raw: unknown): Enviro
     githubRepo,
     instanceType,
     amiId,
+    hostedZoneName,
     llm,
     extract,
   };
