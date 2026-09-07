@@ -19,12 +19,12 @@
     "crewreg": {
       "dev": {
         "region": "ap-south-1",
-        "apiHost": "api.example.com",
-        "acmeEmail": "ops@example.com",
-        "budgetEmail": "ops@example.com",
+        "apiHost": "api-dev.aucto.io",
+        "acmeEmail": "mattkhoo1234@gmail.com",
+        "budgetEmail": "mattkhoo1234@gmail.com",
         "budgetUsd": 40,
         "corsAllowedOrigins": [
-          "https://main.d1234567890abc.amplifyapp.com"
+          "https://app.aucto.io"
         ],
         "githubRepo": "mattkhoo-wg/shipping-backend",
         "instanceType": "t3.micro",
