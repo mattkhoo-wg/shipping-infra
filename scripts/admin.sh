@@ -17,6 +17,11 @@
 # shell for anything beyond a development account.
 set -euo pipefail
 
+# Git Bash on Windows rewrites arguments that look like POSIX paths
+# (/etc/..., /opt/...) into Windows paths before aws receives them, which
+# corrupts the remote command. Off for this script; harmless elsewhere.
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"
+
 env_name="${1:?usage: scripts/admin.sh <env> <admin subcommand and flags>}"
 shift
 if [ $# -eq 0 ]; then
