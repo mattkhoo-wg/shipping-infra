@@ -66,6 +66,11 @@ export class DataStack extends cdk.Stack {
     // dbname, sslmode). RDS attaches host, port and dbname after the instance
     // exists; the password is generated here; user and sslmode are fixed.
     //
+    // `username` duplicates `user`: the RDS secret attachment refuses to attach
+    // unless the secret holds keys named exactly `username` and `password`
+    // (verified by a failed first deploy), and the backend ignores keys it does
+    // not know. Both must stay, and must stay equal.
+    //
     // No punctuation in the password: common/db builds a keyword/value DSN
     // without quoting, so a space, quote or backslash would break the connect.
     const databaseSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
@@ -74,6 +79,7 @@ export class DataStack extends cdk.Stack {
       generateSecretString: {
         secretStringTemplate: JSON.stringify({
           user: DATABASE_USER,
+          username: DATABASE_USER,
           dbname: DATABASE_NAME,
           port: DATABASE_PORT,
           sslmode: 'require',
