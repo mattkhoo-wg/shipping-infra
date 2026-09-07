@@ -3,7 +3,7 @@
 AWS infrastructure for the crewreg backend (`shipping-backend`), as an AWS CDK
 app in TypeScript. One environment is one EC2 instance, one RDS Postgres, three
 Secrets Manager secrets, an S3 bucket for releases, a GitHub OIDC deploy role
-and a budget alert, all in `ap-south-1`.
+and a budget alert, all in `us-east-2` (Ohio).
 
 - `docs/deployment-plan.md`: the plan as approved before this was built.
 - `docs/deployment-architecture.md`: what is deployed and how it fits together.
@@ -30,7 +30,7 @@ test/                   CDK assertion tests + the cdk-nag gate
 - Node.js 22+ and `npm install` in this directory.
 - AWS CLI v2 with credentials for the target account (`aws sso login`).
 - The account bootstrapped for CDK once per region:
-  `npx cdk bootstrap aws://<account-id>/ap-south-1`.
+  `npx cdk bootstrap aws://<account-id>/us-east-2`.
 - Go 1.25+ and the backend repo checked out beside this one, for
   `scripts/deploy.sh` (the GitHub button needs neither).
 
@@ -96,7 +96,7 @@ test/                   CDK assertion tests + the cdk-nag gate
   `/crewreg/dev/caddy` (14 days). On the box: `/var/log/crewreg/server.log`,
   `/var/log/caddy/access.log`, `/var/log/crewreg-bootstrap.log`.
 - **A shell on the instance:** no SSH. Use the `SessionCommand` output:
-  `aws ssm start-session --region ap-south-1 --target <instance-id>`.
+  `aws ssm start-session --region us-east-2 --target <instance-id>`.
 - **Change the LLM models:** edit the `dev/llm` secret directly (console or
   CLI), then restart the service. Do not change the `llm` block in `cdk.json`
   for a deployed environment: it only seeds the secret at creation, and a

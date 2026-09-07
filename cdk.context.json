@@ -1,8 +1,1 @@
-{
-  "availability-zones:account=200845568969:region=ap-south-1": [
-    "ap-south-1a",
-    "ap-south-1b",
-    "ap-south-1c"
-  ],
-  "ssm:account=200845568969:parameterName=/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64:region=ap-south-1": "ami-094210f044117049d"
-}
+{}

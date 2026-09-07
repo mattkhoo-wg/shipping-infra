@@ -1,7 +1,9 @@
 # Deployment plan: crewreg backend on AWS (MVP)
 
 Status: approved 2026-09-06 (owner: Matthew Khoo). This file is the plan as
-agreed before any infrastructure code was written. The as-built description
+agreed before any infrastructure code was written. Region changed to
+`us-east-2` at the owner's request on 2026-09-07, after a first deploy to
+Mumbai; the figures below are the Mumbai ones the plan was approved with. The as-built description
 lives in `deployment-architecture.md`; where the two disagree, the as-built
 document wins.
 

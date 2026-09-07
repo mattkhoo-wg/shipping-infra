@@ -5,7 +5,14 @@ what `npx cdk deploy --all` creates for one environment and how a release
 travels from a git commit to a running process. Where it disagrees with the
 plan, this document is right.
 
-One deliberate deviation from the plan, from code review: the deploy step no
+Two deliberate deviations from the plan. The first, from the owner on
+2026-09-07: the region is `us-east-2` (Ohio), not `ap-south-1` (Mumbai). The
+plan picked Mumbai for data residency; the owner chose Ohio, which is also about
+$5/month cheaper. India's DPDP Act permits transfers to any country not on a
+notified blocklist (none at the time of writing), and the LLM calls already
+leave India, so the choice is defensible, but it is the owner's to record.
+
+The second, from code review: the deploy step no
 longer sends the generic `AWS-RunShellScript` document. Each environment gets
 its own SSM document (`crewreg-<env>-deploy`) whose content is fixed to the
 deploy script and whose only parameter is a git sha, and the GitHub deploy role
@@ -23,7 +30,7 @@ flowchart LR
   subgraph gh [GitHub]
     WF[Deploy workflow]
   end
-  subgraph aws [AWS ap-south-1]
+  subgraph aws [AWS us-east-2]
     subgraph vpc [VPC 10.20.0.0/16, no NAT]
       subgraph pub [Public subnets]
         EC2[EC2 t3.micro<br/>Caddy :443 -> server :8080]
@@ -257,9 +264,10 @@ the origins listed in `config.yaml` (ADR 0022 in the backend repo).
 
 ## Cost
 
-See the itemised table in `docs/deployment-plan.md`: about $32/month at
-on-demand prices, about $1.20/month inside the legacy 12-month free tier, and
-covered by credits for some months on an account opened after July 2025.
+About $27/month at Ohio on-demand prices (EC2 $7.59, EBS $0.80, public IPv4
+$3.65, RDS instance $11.68, RDS storage $2.30, secrets $1.20), computed from
+AWS's published price files on 2026-09-07. The plan's table shows the Mumbai
+figures it was approved with. This account has no free tier or credits.
 The only cost lines the design cannot avoid on a paid account are the RDS
 instance and the public IPv4 address.
 
