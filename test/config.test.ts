@@ -41,6 +41,8 @@ describe('validateEnvironmentConfig', () => {
     ['instanceType', 'micro', 'not an EC2 instance type'],
     ['amiId', 'ami', 'ami-0123456789abcdef0'],
     ['amiId', 42, 'ami-0123456789abcdef0'],
+    ['hostedZoneName', 'not a zone', 'DNS name'],
+    ['hostedZoneName', 'other.com', 'not inside hostedZoneName'],
   ])('rejects bad %s = %p', (field, value, message) => {
     expect(() => validateEnvironmentConfig('dev', { ...raw(), [field]: value })).toThrow(message);
   });
@@ -61,6 +63,13 @@ describe('validateEnvironmentConfig', () => {
     expect(cfg.envName).toBe('prod');
     expect(cfg.amiId).toBe('ami-0123456789abcdef0');
     expect(cfg.corsAllowedOrigins).toEqual([]);
+  });
+
+  test('accepts an apex apiHost equal to the zone, and no zone at all', () => {
+    expect(validateEnvironmentConfig('dev', { ...raw(), apiHost: 'Example.com', hostedZoneName: 'EXAMPLE.com' }).hostedZoneName).toBe('example.com');
+    const noZone = { ...raw() } as Record<string, unknown>;
+    delete noZone.hostedZoneName;
+    expect(validateEnvironmentConfig('dev', noZone).hostedZoneName).toBeUndefined();
   });
 
   test('rejects a non-object block', () => {

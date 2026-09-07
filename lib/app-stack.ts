@@ -8,6 +8,7 @@ import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
@@ -22,6 +23,8 @@ export interface AppStackProps extends cdk.StackProps {
   readonly vpc: ec2.IVpc;
   readonly databaseSecurityGroup: ec2.ISecurityGroup;
   readonly secrets: BackendSecrets;
+  /** When present, the API's A record is written here instead of by hand at the registrar. */
+  readonly hostedZone?: route53.IHostedZone;
 }
 
 /** Caddy release installed on the instance. Bump deliberately; it replaces the instance. */
@@ -187,13 +190,27 @@ export class AppStack extends cdk.Stack {
       instanceId: this.instance.instanceId,
     });
 
+    if (props.hostedZone !== undefined) {
+      // Short TTL: the address only changes when the instance is replaced,
+      // but when it does, five minutes of stale answers is the outage budget.
+      new route53.ARecord(this, 'ApiRecord', {
+        zone: props.hostedZone,
+        recordName: `${config.apiHost}.`,
+        target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
+        ttl: cdk.Duration.minutes(5),
+        comment: `crewreg ${env} API instance (Elastic IP)`,
+      });
+    }
+
     this.deployDocument = this.createDeployDocument(config);
     this.deployRole = this.createDeployRole(config);
     this.createBudget(config);
 
     new cdk.CfnOutput(this, 'ElasticIp', {
       value: eip.attrPublicIp,
-      description: `Point the A record for ${config.apiHost} at this address`,
+      description: props.hostedZone !== undefined
+        ? `Address of ${config.apiHost}; the A record is managed in Route 53`
+        : `Point the A record for ${config.apiHost} at this address`,
     });
     new cdk.CfnOutput(this, 'ApiHost', { value: config.apiHost, description: 'GitHub environment variable API_HOST' });
     new cdk.CfnOutput(this, 'ArtifactsBucket', { value: this.artifactsBucket.bucketName, description: 'GitHub environment variable ARTIFACTS_BUCKET' });

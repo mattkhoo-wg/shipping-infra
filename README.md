@@ -17,6 +17,7 @@ lib/config.ts           validated per-environment settings from cdk.json
 lib/data-stack.ts       VPC, RDS Postgres, the three secrets
 lib/app-stack.ts        instance, security groups, EIP, bucket, deploy role, budget
 lib/github-oidc-stack.ts  the account-level GitHub Actions OIDC provider
+lib/dns-stack.ts        the Route 53 hosted zone for the domain (retained on destroy)
 lib/user-data.ts        renders the first-boot script from instance/
 lib/nag-suppressions.ts cdk-nag findings accepted on purpose, with reasons
 instance/               files installed on the box (bootstrap, deploy script, units, Caddyfile)
@@ -45,16 +46,21 @@ test/                   CDK assertion tests + the cdk-nag gate
    ```bash
    npm test                      # assertions + cdk-nag gate
    npx cdk synth
-   npx cdk deploy --all          # oidc provider, then data, then app
+   npx cdk deploy --all          # oidc provider + dns zone, then data, then app
    ```
    The first deploy takes 10 to 15 minutes, most of it RDS. The AMI is looked
    up once and cached in `cdk.context.json`; commit that file.
    If the account already has a GitHub OIDC provider, add
    `-c crewreg:createGithubOidcProvider=false`.
-3. **Point DNS at the instance.** The app stack outputs `ElasticIp`. In
-   Namecheap, add an `A` record for the host part of `apiHost` with that
-   address. Caddy on the instance requests the certificate as soon as the name
-   resolves, and retries until it does.
+3. **Point the domain at Route 53.** The `crewreg-dns` stack creates the
+   hosted zone for `hostedZoneName` and outputs `NameServers`. In Namecheap,
+   Domain List, Manage, Nameservers, choose Custom DNS and enter those four
+   names. The API's `A` record is already in the zone; Caddy requests the
+   certificate as soon as the nameserver change propagates (minutes to a few
+   hours) and retries until it does. Amplify's custom domain for the frontend
+   goes into the same zone, which the Amplify console does on its own.
+   Without `hostedZoneName` in `cdk.json` the record is yours to add at the
+   registrar, pointing at the `ElasticIp` output.
 4. **Set the LLM API key.** The `dev/llm` secret was created with the provider
    and model names and a placeholder key.
    ```bash

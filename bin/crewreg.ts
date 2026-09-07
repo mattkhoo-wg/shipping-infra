@@ -12,6 +12,7 @@ import { AwsSolutionsChecks } from 'cdk-nag';
 import { AppStack, TAG_ENV } from '../lib/app-stack';
 import { loadEnvironmentConfig } from '../lib/config';
 import { DataStack } from '../lib/data-stack';
+import { DnsStack } from '../lib/dns-stack';
 import { GithubOidcStack } from '../lib/github-oidc-stack';
 import { applyNagSuppressions } from '../lib/nag-suppressions';
 
@@ -38,6 +39,12 @@ cdk.Tags.of(app).add('crewreg:project', 'crewreg');
 const createOidc = app.node.tryGetContext('crewreg:createGithubOidcProvider') !== false;
 const oidc = createOidc ? new GithubOidcStack(app, 'crewreg-github-oidc', { env }) : undefined;
 
+// The hosted zone is account-level like the OIDC provider: one zone, every
+// environment writes its own records into it.
+const dns = config.hostedZoneName !== undefined
+  ? new DnsStack(app, 'crewreg-dns', { env, zoneName: config.hostedZoneName, description: `crewreg: Route 53 hosted zone for ${config.hostedZoneName}` })
+  : undefined;
+
 const data = new DataStack(app, `crewreg-${envName}-data`, {
   env,
   config,
@@ -51,6 +58,7 @@ const appStack = new AppStack(app, `crewreg-${envName}-app`, {
   vpc: data.vpc,
   databaseSecurityGroup: data.databaseSecurityGroup,
   secrets: data.secrets,
+  hostedZone: dns?.zone,
   description: `crewreg ${envName}: API instance, releases bucket, GitHub deploy role, budget`,
 });
 if (oidc !== undefined) {

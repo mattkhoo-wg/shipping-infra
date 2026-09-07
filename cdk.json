@@ -20,6 +20,7 @@
       "dev": {
         "region": "us-east-2",
         "apiHost": "api-dev.aucto.io",
+        "hostedZoneName": "aucto.io",
         "acmeEmail": "mattkhoo1234@gmail.com",
         "budgetEmail": "mattkhoo1234@gmail.com",
         "budgetUsd": 40,

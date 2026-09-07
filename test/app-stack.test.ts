@@ -63,6 +63,22 @@ describe('AppStack', () => {
     });
   });
 
+  test('writes the API A record into the hosted zone, pointing at the Elastic IP', () => {
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: 'api.example.com.',
+      Type: 'A',
+      TTL: '300',
+      ResourceRecords: [{ 'Fn::GetAtt': [Match.stringLikeRegexp('^Eip'), 'PublicIp'] }],
+      HostedZoneId: Match.objectLike({ 'Fn::ImportValue': Match.stringLikeRegexp('crewreg-dns') }),
+    });
+  });
+
+  test('leaves DNS to the registrar when no hosted zone is configured', () => {
+    const manual = synthesizeEnvironment({ hostedZoneName: undefined });
+    Template.fromStack(manual.appStack).resourceCountIs('AWS::Route53::RecordSet', 0);
+    Template.fromStack(manual.appStack).hasOutput('ElasticIp', { Description: Match.stringLikeRegexp('Point the A record') });
+  });
+
   test('keeps releases in a private, versioned, TLS-only bucket that survives destroy', () => {
     template.hasResourceProperties('AWS::S3::Bucket', {
       PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true },
