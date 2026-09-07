@@ -23,6 +23,7 @@ lib/nag-suppressions.ts cdk-nag findings accepted on purpose, with reasons
 instance/               files installed on the box (bootstrap, deploy script, units, Caddyfile)
 scripts/deploy.sh       deploy from a laptop (same contract as the GitHub button)
 scripts/set-llm-key.sh  put the real LLM API key into <env>/llm, once
+scripts/admin.sh        run the backend's operator-only account commands on the instance
 test/                   CDK assertion tests + the cdk-nag gate
 ```
 
@@ -115,6 +116,24 @@ test/                   CDK assertion tests + the cdk-nag gate
   the Elastic IP follows the new instance.
 - **Costs:** the budget emails at 80% of `budgetUsd` and when the month is
   forecast to exceed it. `docs/deployment-plan.md` has the itemised estimate.
+
+## Creating accounts
+
+There is no public sign-up. Organisations and users are created by an operator
+with the backend's `server admin` subcommand, which runs on the instance over
+SSM through `scripts/admin.sh`:
+
+```bash
+scripts/admin.sh dev create-org  --name "Blue Anchor Crewing"        # prints org_id=...
+scripts/admin.sh dev create-user --org-id <uuid> --email ops@example.com --generate-password
+scripts/admin.sh dev list-orgs
+```
+
+`--generate-password` prints the new password once. SSM Run Command keeps
+command output in its history for 30 days, so treat that as sensitive; for
+anything beyond a development account, open a Session Manager shell and use
+`--password-stdin` instead. Further users of an existing organisation can also
+be added through the API by a logged-in member (`POST /orgs/:org_id/users`).
 
 ## Tearing an environment down
 
