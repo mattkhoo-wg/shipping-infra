@@ -24,7 +24,9 @@ install_caddy() {
   tmp="$(mktemp -d)"
   curl -fsSL --retry 5 --retry-delay 3 -o "${tmp}/${tgz}" "${base}/${tgz}"
   curl -fsSL --retry 5 --retry-delay 3 -o "${tmp}/checksums.txt" "${base}/caddy_${version}_checksums.txt"
-  (cd "${tmp}" && grep " ${tgz}\$" checksums.txt | sha256sum -c -)
+  # Caddy publishes SHA-512 sums (128 hex chars per line); sha256sum rejects
+  # them as malformed, which is how the first instance failed its bootstrap.
+  (cd "${tmp}" && grep " ${tgz}\$" checksums.txt | sha512sum -c -)
   tar -xzf "${tmp}/${tgz}" -C "${tmp}" caddy
   install -m 0755 "${tmp}/caddy" /usr/local/bin/caddy
   rm -rf "${tmp}"

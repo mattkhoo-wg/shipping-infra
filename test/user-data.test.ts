@@ -44,7 +44,9 @@ describe('renderUserData', () => {
     expect(script).toContain('dnf install -y poppler-utils amazon-cloudwatch-agent dnf-automatic');
     expect(script).toContain('local version="2.11.4"');
     expect(script).toContain('caddy_${version}_checksums.txt');
-    expect(script).toContain('sha256sum -c -');
+    // Caddy's checksums file is SHA-512, so the wrong tool here is a broken boot.
+    expect(script).toContain('sha512sum -c -');
+    expect(script).not.toContain('sha256sum -c -');
   });
 
   test('writes the config file, the Caddyfile and the deploy environment', () => {
