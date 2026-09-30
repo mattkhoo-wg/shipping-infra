@@ -5,10 +5,19 @@ what `npx cdk deploy --all` creates for one environment and how a release
 travels from a git commit to a running process. Where it disagrees with the
 plan, this document is right.
 
+Amended 2026-09-30 for the requisition series (backend `docs/INFRA.md`): a
+private S3 bucket for uploaded CVs, an SES sender identity with DKIM, and
+three more config sections (`storage`, `mail`, `public`) rendered into the
+instance; and for the move to `trynilla.com`, whose Route 53 zone already
+existed and is imported (`hostedZoneId` in `cdk.json`) rather than created.
+The API is `api-dev.trynilla.com`, the frontend `app.trynilla.com`, and the
+apex is reserved for the marketing site.
+
 Three deliberate deviations from the plan. The third, from the owner on
 2026-09-07: DNS moved from Namecheap's own servers to a Route 53 hosted zone
 (`crewreg-dns` stack, $0.50/month) so the API record is managed by the stack
-and the Amplify frontend can share the domain.
+and the Amplify frontend can share the domain. That stack still owns the
+`aucto.io` zone; `trynilla.com` is imported, so no stack owns it.
 
 The first two: The first, from the owner on
 2026-09-07: the region is `us-east-2` (Ohio), not `ap-south-1` (Mumbai). The
@@ -45,17 +54,21 @@ flowchart LR
       end
     end
     S3[(S3 artifacts<br/>server/sha/server)]
+    CV[(S3 CV documents<br/>org/id/cv/id.ext)]
+    SES[SES identity trynilla.com<br/>DKIM verified]
     SM[Secrets Manager<br/>dev/llm dev/database dev/auth]
     SSM[SSM Run Command]
     CW[CloudWatch Logs]
   end
-  DNS[Route 53 zone aucto.io<br/>api-dev A -> EIP]
+  DNS[Route 53 zone trynilla.com<br/>api-dev A -> EIP, DKIM CNAMEs, app CNAME -> Amplify]
   LLM[Gemini API]
 
-  FE -- HTTPS + CORS --> DNS --> EC2
+  FE -- HTTPS, BFF key --> DNS --> EC2
   EC2 -- 5432, SG to SG --> RDS
   EC2 -- read at boot --> SM
   EC2 -- pull release --> S3
+  EC2 -- put/get CVs --> CV
+  EC2 -- verification codes --> SES
   EC2 -- logs --> CW
   EC2 -- extraction calls --> LLM
   WF -- OIDC assume role --> S3
@@ -71,9 +84,9 @@ name, tag and secret name.
 | Stack | Holds | Why separate |
 |---|---|---|
 | `crewreg-github-oidc` | The `token.actions.githubusercontent.com` OIDC provider | One per account; a second environment reuses it |
-| `crewreg-dns` | The Route 53 public hosted zone for `aucto.io` | One per account, shared by every environment and by the Amplify frontend; retained on delete so a teardown cannot break the domain |
+| `crewreg-dns` | The Route 53 public hosted zone for `aucto.io`, the previous domain | Only synthesized when `cdk.json` names a `hostedZoneName` without a `hostedZoneId`; `trynilla.com` is imported by the app stack instead. Retained on delete so a teardown cannot break a domain |
 | `crewreg-dev-data` | VPC, database security group, RDS instance, the three secrets | Stateful. Nothing here is replaced casually; `prod` gets termination protection |
-| `crewreg-dev-app` | API security group, instance role, instance, Elastic IP, artifacts bucket, log groups, the `crewreg-dev-deploy` SSM document, GitHub deploy role, budget | Stateless. The instance is replaced whenever its bootstrap changes |
+| `crewreg-dev-app` | API security group, instance role, instance, Elastic IP, artifacts bucket, CV bucket, SES identity and DKIM records, the API `A` record, log groups, the `crewreg-dev-deploy` SSM document, GitHub deploy role, budget | Stateless except the CV bucket, which is retained. The instance is replaced whenever its bootstrap changes |
 
 The app stack imports the VPC, the database security group id and the three
 secret ARNs from the data stack through CloudFormation exports (reference
@@ -132,7 +145,7 @@ every file below into one script (about 10 KB, hard limit 16 KB), logged to
 
 | Path on the box | Source | Purpose |
 |---|---|---|
-| `/etc/crewreg/config.yaml` | rendered | `environment`, `region`, `extract`, `cors`. No secrets; the loader replaces `llm`, `database`, `auth` from Secrets Manager |
+| `/etc/crewreg/config.yaml` | rendered | `environment`, `region`, `extract`, `cors`, `storage.bucket` (the CV bucket), `mail` (`ses`, `mailFrom`), `public.base_url` (`frontendOrigin`). No secrets; the loader replaces `llm`, `database`, `auth` from Secrets Manager |
 | `/etc/crewreg/deploy.env` | rendered | `ARTIFACTS_BUCKET`, `AWS_DEFAULT_REGION` for the deploy script |
 | `/etc/crewreg/cloudwatch-agent.json` | `instance/cloudwatch-agent.json` | ships the two log files |
 | `/etc/systemd/system/crewreg.service` | `instance/crewreg.service` | the API, as user `crewreg`, `CONFIG_PATH` set, hardened, logs to a file |
@@ -190,7 +203,7 @@ tags of the backend's config structs.
 | Secret | Keys | Origin of each value |
 |---|---|---|
 | `dev/database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` (+ `username`, `engine`, `dbInstanceIdentifier`, ignored by the backend) | `password` generated (32 alphanumerics, no punctuation because the backend builds an unquoted DSN); `user`, `dbname`, `sslmode` fixed; `username` duplicates `user` because RDS refuses to attach a secret without that exact key; `host`, `port` attached by RDS after creation |
-| `dev/auth` | `signing_key` | generated, 64 alphanumerics (backend minimum 32 bytes) |
+| `dev/auth` | `signing_key`, `bff_shared_key` | `signing_key` generated, 64 alphanumerics (backend minimum 32 bytes); `bff_shared_key` minted by `scripts/set-bff-key.sh`, which puts the same value on the Amplify app as `CREWREG_BFF_KEY` (ADR 0034) |
 | `dev/llm` | `provider`, `text_model`, `vision_model`, `max_tokens`, `api_key` | first four from `cdk.json`; `api_key` generated as a placeholder and replaced once by `scripts/set-llm-key.sh` |
 
 Only the instance role can read them. No rotation is configured: the backend
@@ -236,11 +249,29 @@ The last five releases stay on disk. At first boot the same script runs for
 rather than failing the bootstrap, since everything else on the box is
 already in place.
 
+## CV storage and mail
+
+The CV bucket (`CvDocuments`, name generated, exposed as the `CvBucket`
+output) is private, S3-managed encryption, TLS-only, unversioned, retained on
+stack deletion. The backend archives every upload there before extraction
+(ADR 0028) under `org/<org_id>/cv/<cv_upload_id><ext>` and reads it back for
+re-review (T8); nothing deletes from it (ADR 0038), and the instance role has
+no delete permission, so a bug cannot either. `HeadBucket` at boot is the
+reachability check.
+
+The SES domain identity is the domain of `mailFrom` (`trynilla.com`). The app
+stack creates it with Easy DKIM and writes the three DKIM CNAMEs into the
+hosted zone, so SES verifies it without a person involved; without a zone the
+records are stack outputs to add at the registrar. The backend checks
+`GetEmailIdentity` at boot and refuses to start until the identity is
+verified. The account is still in the SES sandbox, which is an AWS Support
+request outside this repo (`docs/operator-guide.md`, section 7).
+
 ## Identity and access
 
 | Principal | May |
 |---|---|
-| Instance role `crewreg-dev-api-instance` | `AmazonSSMManagedInstanceCore`; `GetSecretValue`/`DescribeSecret` on the three secrets; `GetObject`/`ListBucket` under `server/*` of the artifacts bucket; write to the two log groups; `logs:DescribeLogGroups` |
+| Instance role `crewreg-dev-api-instance` | `AmazonSSMManagedInstanceCore`; `GetSecretValue`/`DescribeSecret` on the three secrets; `GetObject`/`ListBucket` under `server/*` of the artifacts bucket; `GetObject`/`ListBucket`/`PutObject` (no delete) on the CV bucket; `ses:SendEmail`/`SendRawEmail` as the sender identity and `ses:GetEmailIdentity` on it; write to the two log groups; `logs:DescribeLogGroups` |
 | GitHub deploy role `crewreg-dev-github-deploy` | Assumed via OIDC only by jobs of `mattkhoo-wg/shipping-backend` that declare `environment: dev` (`sub` claim `repo:<repo>:environment:dev`, `aud` `sts.amazonaws.com`); `PutObject`/`AbortMultipartUpload` under `server/*`; `ssm:SendCommand` with the `crewreg-dev-deploy` document only, on instances tagged `crewreg:env=dev` only; read command results. Session limit 1 h |
 
 Neither role can read the other's side: the instance cannot publish releases
@@ -249,11 +280,14 @@ and the workflow cannot read secrets or open a shell.
 ## Edge
 
 Caddy holds the certificate for `apiHost` from Let's Encrypt, renews it, and
-redirects 80 to 443. DNS is a Route 53 hosted zone created by the `crewreg-dns`
-stack; Namecheap only delegates to its four nameservers. The app stack writes
-the `A` record for `apiHost` (TTL 5 minutes) pointing at the Elastic IP, so a
-replaced instance needs no DNS change. The frontend's custom domain is added
-from the Amplify console, which writes its own records into the same zone. Caddy adds `Strict-Transport-Security`,
+redirects 80 to 443. DNS is the `trynilla.com` Route 53 hosted zone, imported
+by the app stack from `hostedZoneId`; the registrar only delegates to its four
+nameservers. The app stack writes the `A` record for `apiHost` (TTL 5
+minutes) pointing at the Elastic IP, so a replaced instance needs no DNS
+change, and the SES DKIM CNAMEs. The frontend's custom domain
+(`app.trynilla.com`, the `app` subdomain of the `trynilla.com` association)
+is added on the Amplify app, which writes its CNAME and certificate validation
+record into the same zone; the apex is left free. Caddy adds `Strict-Transport-Security`,
 removes the `Server` header, compresses responses, and caps request bodies at
 16 MB, just above the backend's own 15 MiB upload limit so the backend is the
 one that answers 413.
@@ -283,7 +317,12 @@ instance and the public IPv4 address.
 ## Known gaps, on purpose
 
 - Single instance, single AZ, no health-based replacement. An instance failure
-  is a manual `cdk deploy crewreg-dev-app`.
+  is a manual `cdk deploy crewreg-dev-app`. A second instance is also a design
+  change, not a count: the backend's extraction cache (ADR 0040) and rate
+  limiter (ADR 0034) are per-process memory, so two instances would each keep
+  their own.
+- SES is in the sandbox: verification codes reach verified addresses only
+  until production access is granted.
 - `POST /orgs` is unauthenticated and login has no rate limit; these are
   backend items recorded in its `docs/STATUS.md`. The backend must not hold
   real seafarer data yet.

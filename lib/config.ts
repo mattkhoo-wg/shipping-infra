@@ -61,11 +61,23 @@ export interface EnvironmentConfig {
   /** Optional AMI pin. When absent the latest Amazon Linux 2023 is looked up once and cached in cdk.context.json. */
   readonly amiId?: string;
   /**
-   * Optional Route 53 public hosted zone to create and manage, e.g. `example.com`.
-   * When set, `apiHost` must be inside it and the app stack writes its A record;
-   * when absent, the A record is the operator's job at the registrar.
+   * Optional Route 53 public hosted zone, e.g. `example.com`. When set, `apiHost`
+   * and the mail domain must be inside it: the app stack writes the API's A record
+   * and the SES DKIM records there. When absent, both are the operator's job.
    */
   readonly hostedZoneName?: string;
+  /**
+   * Id of an existing hosted zone for `hostedZoneName`. When set, the zone is
+   * imported and no `crewreg-dns` stack is created; when absent, the dns stack
+   * creates the zone.
+   */
+  readonly hostedZoneId?: string;
+  /** Origin the frontend is served from; the backend composes every public link under it. */
+  readonly frontendOrigin: string;
+  /** Sender of the backend's mail, `Name <local@domain>` or a bare address. */
+  readonly mailFrom: string;
+  /** Domain of `mailFrom`; the SES identity the app stack creates and verifies. */
+  readonly mailDomain: string;
   readonly llm: LlmSettings;
   readonly extract: ExtractSettings;
 }
@@ -78,6 +90,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INSTANCE_TYPE_RE = /^[a-z][a-z0-9-]*\.[a-z0-9]+$/;
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const AMI_ID_RE = /^ami-[0-9a-f]{8,17}$/;
+const HOSTED_ZONE_ID_RE = /^Z[0-9A-Z]{6,32}$/;
+/** `Name <local@domain>` or `local@domain`; no quotes, so the value can be written into YAML as is. */
+const MAIL_FROM_RE = /^(?:[^<>"]*?\s*<([^\s<>@"]+@[^\s<>@"]+)>|([^\s<>@"]+@[^\s<>@"]+))$/;
 
 /**
  * Reads and validates the configuration for `envName` from the app's context.
@@ -165,9 +180,34 @@ export function validateEnvironmentConfig(envName: string, raw: unknown): Enviro
       throw new Error(`${at('hostedZoneName')} must be a DNS name such as example.com`);
     }
     hostedZoneName = raw.hostedZoneName.toLowerCase();
-    if (apiHost !== hostedZoneName && !apiHost.endsWith(`.${hostedZoneName}`)) {
+    if (!isInsideZone(apiHost, hostedZoneName)) {
       throw new Error(`${at('apiHost')} "${apiHost}" is not inside hostedZoneName "${hostedZoneName}"`);
     }
+  }
+
+  let hostedZoneId: string | undefined;
+  if (raw.hostedZoneId !== undefined) {
+    if (typeof raw.hostedZoneId !== 'string' || !HOSTED_ZONE_ID_RE.test(raw.hostedZoneId)) {
+      throw new Error(`${at('hostedZoneId')} must be a Route 53 hosted zone id such as Z0123456789ABCDEFGHIJ`);
+    }
+    if (hostedZoneName === undefined) {
+      throw new Error(`${at('hostedZoneId')} needs hostedZoneName`);
+    }
+    hostedZoneId = raw.hostedZoneId;
+  }
+
+  const frontendOrigin = requireString(raw, 'frontendOrigin', at);
+  if (!isOrigin(frontendOrigin)) {
+    throw new Error(`${at('frontendOrigin')} "${frontendOrigin}" must be an absolute http(s)://host[:port] origin with no path`);
+  }
+
+  const mailFrom = requireString(raw, 'mailFrom', at);
+  const mailDomain = mailFromDomain(mailFrom);
+  if (mailDomain === undefined || !HOSTNAME_RE.test(mailDomain)) {
+    throw new Error(`${at('mailFrom')} "${mailFrom}" must be "Name <local@domain>" or local@domain`);
+  }
+  if (hostedZoneName !== undefined && !isInsideZone(mailDomain, hostedZoneName)) {
+    throw new Error(`${at('mailFrom')} domain "${mailDomain}" is not inside hostedZoneName "${hostedZoneName}"`);
   }
 
   const llm = validateLlm(raw.llm, (f) => at(`llm.${f}`));
@@ -185,9 +225,27 @@ export function validateEnvironmentConfig(envName: string, raw: unknown): Enviro
     instanceType,
     amiId,
     hostedZoneName,
+    hostedZoneId,
+    frontendOrigin,
+    mailFrom,
+    mailDomain,
     llm,
     extract,
   };
+}
+
+/** The lower-cased domain of a `mailFrom` value, or undefined when it is not an address. */
+export function mailFromDomain(mailFrom: string): string | undefined {
+  const match = MAIL_FROM_RE.exec(mailFrom.trim());
+  if (match === null) {
+    return undefined;
+  }
+  const address = match[1] ?? match[2];
+  return address.split('@')[1].toLowerCase();
+}
+
+function isInsideZone(hostname: string, zoneName: string): boolean {
+  return hostname === zoneName || hostname.endsWith(`.${zoneName}`);
 }
 
 /**

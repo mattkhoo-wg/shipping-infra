@@ -1,6 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 
-import { instanceArchitecture, isOrigin, loadEnvironmentConfig, validateEnvironmentConfig } from '../lib/config';
+import { instanceArchitecture, isOrigin, loadEnvironmentConfig, mailFromDomain, validateEnvironmentConfig } from '../lib/config';
 import { TEST_CONTEXT } from './helpers';
 
 const raw = () => JSON.parse(JSON.stringify(TEST_CONTEXT.crewreg.dev)) as Record<string, unknown>;
@@ -14,6 +14,10 @@ describe('validateEnvironmentConfig', () => {
     expect(cfg.corsAllowedOrigins).toEqual(TEST_CONTEXT.crewreg.dev.corsAllowedOrigins);
     expect(cfg.llm.provider).toBe('gemini');
     expect(cfg.amiId).toBeUndefined();
+    expect(cfg.hostedZoneId).toBeUndefined();
+    expect(cfg.frontendOrigin).toBe('https://app.example.com');
+    expect(cfg.mailFrom).toBe('Crewreg <no-reply@example.com>');
+    expect(cfg.mailDomain).toBe('example.com');
   });
 
   test.each([
@@ -43,6 +47,16 @@ describe('validateEnvironmentConfig', () => {
     ['amiId', 42, 'ami-0123456789abcdef0'],
     ['hostedZoneName', 'not a zone', 'DNS name'],
     ['hostedZoneName', 'other.com', 'not inside hostedZoneName'],
+    ['hostedZoneId', 'zone-1', 'hosted zone id'],
+    ['hostedZoneId', 42, 'hosted zone id'],
+    ['frontendOrigin', 'app.example.com', 'frontendOrigin'],
+    ['frontendOrigin', 'https://app.example.com/', 'frontendOrigin'],
+    ['frontendOrigin', '', 'is required'],
+    ['mailFrom', 'no-reply', 'local@domain'],
+    ['mailFrom', '"Crewreg" <no-reply@example.com>', 'local@domain'],
+    ['mailFrom', 'Crewreg <no-reply@example.com', 'local@domain'],
+    ['mailFrom', 'no-reply@other.com', 'not inside hostedZoneName'],
+    ['mailFrom', 'Crewreg <no-reply@mail.other.com>', 'not inside hostedZoneName'],
   ])('rejects bad %s = %p', (field, value, message) => {
     expect(() => validateEnvironmentConfig('dev', { ...raw(), [field]: value })).toThrow(message);
   });
@@ -72,6 +86,21 @@ describe('validateEnvironmentConfig', () => {
     expect(validateEnvironmentConfig('dev', noZone).hostedZoneName).toBeUndefined();
   });
 
+  test('imports an existing zone by id, and refuses an id without a name', () => {
+    expect(validateEnvironmentConfig('dev', { ...raw(), hostedZoneId: 'Z04086442AMPWSPJV0TW2' }).hostedZoneId).toBe('Z04086442AMPWSPJV0TW2');
+    const noZone = { ...raw(), hostedZoneId: 'Z04086442AMPWSPJV0TW2' } as Record<string, unknown>;
+    delete noZone.hostedZoneName;
+    expect(() => validateEnvironmentConfig('dev', noZone)).toThrow('needs hostedZoneName');
+  });
+
+  test('accepts a bare sender, a subdomain sender inside the zone, and any sender without a zone', () => {
+    expect(validateEnvironmentConfig('dev', { ...raw(), mailFrom: 'no-reply@example.com' }).mailDomain).toBe('example.com');
+    expect(validateEnvironmentConfig('dev', { ...raw(), mailFrom: 'Crewreg <no-reply@Mail.Example.com>' }).mailDomain).toBe('mail.example.com');
+    const noZone = { ...raw(), mailFrom: 'no-reply@other.com' } as Record<string, unknown>;
+    delete noZone.hostedZoneName;
+    expect(validateEnvironmentConfig('dev', noZone).mailDomain).toBe('other.com');
+  });
+
   test('rejects a non-object block', () => {
     expect(() => validateEnvironmentConfig('dev', 'dev')).toThrow('must be an object');
   });
@@ -97,6 +126,19 @@ describe('loadEnvironmentConfig', () => {
 
     expect(() => loadEnvironmentConfig(app, 'staging')).toThrow('crewreg.staging');
     expect(() => loadEnvironmentConfig(new cdk.App(), 'dev')).toThrow('context "crewreg" is missing');
+  });
+});
+
+describe('mailFromDomain', () => {
+  test.each<[string, string | undefined]>([
+    ['no-reply@example.com', 'example.com'],
+    ['Crewreg <no-reply@example.com>', 'example.com'],
+    [' Crew Reg <No-Reply@Example.COM> ', 'example.com'],
+    ['no-reply', undefined],
+    ['<no-reply@example.com', undefined],
+    ['a@b@c', undefined],
+  ])('%s -> %p', (value, expected) => {
+    expect(mailFromDomain(value)).toBe(expected);
   });
 });
 

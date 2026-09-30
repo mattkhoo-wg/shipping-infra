@@ -18,6 +18,9 @@ export const TEST_CONFIG: EnvironmentConfig = {
   budgetEmail: 'billing@example.com',
   budgetUsd: 40,
   corsAllowedOrigins: ['https://main.d1234567890abc.amplifyapp.com', 'https://app.example.com'],
+  frontendOrigin: 'https://app.example.com',
+  mailFrom: 'Crewreg <no-reply@example.com>',
+  mailDomain: 'example.com',
   githubRepo: 'mattkhoo-wg/shipping-backend',
   instanceType: 't3.micro',
   // Pinned so the suite never touches the AMI context lookup; one test
@@ -38,6 +41,8 @@ export const TEST_CONTEXT = {
       budgetEmail: TEST_CONFIG.budgetEmail,
       budgetUsd: TEST_CONFIG.budgetUsd,
       corsAllowedOrigins: [...TEST_CONFIG.corsAllowedOrigins],
+      frontendOrigin: TEST_CONFIG.frontendOrigin,
+      mailFrom: TEST_CONFIG.mailFrom,
       githubRepo: TEST_CONFIG.githubRepo,
       instanceType: TEST_CONFIG.instanceType,
       llm: { ...TEST_CONFIG.llm },
@@ -62,7 +67,7 @@ export function synthesizeEnvironment(overrides: Partial<EnvironmentConfig> = {}
   const config: EnvironmentConfig = { ...TEST_CONFIG, ...overrides };
   const app = new cdk.App();
   const oidc = new GithubOidcStack(app, 'crewreg-github-oidc', { env: TEST_ENV });
-  const dns = config.hostedZoneName !== undefined
+  const dns = config.hostedZoneName !== undefined && config.hostedZoneId === undefined
     ? new DnsStack(app, 'crewreg-dns', { env: TEST_ENV, zoneName: config.hostedZoneName })
     : undefined;
   const data = new DataStack(app, `crewreg-${config.envName}-data`, { env: TEST_ENV, config });

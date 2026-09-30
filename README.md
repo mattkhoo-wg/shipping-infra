@@ -2,12 +2,14 @@
 
 AWS infrastructure for the crewreg backend (`shipping-backend`), as an AWS CDK
 app in TypeScript. One environment is one EC2 instance, one RDS Postgres, three
-Secrets Manager secrets, an S3 bucket for releases, a GitHub OIDC deploy role
-and a budget alert, all in `us-east-2` (Ohio).
+Secrets Manager secrets, an S3 bucket for releases, an S3 bucket for uploaded
+CVs, an SES sender identity, a GitHub OIDC deploy role and a budget alert, all
+in `us-east-2` (Ohio).
 
 - `docs/deployment-plan.md`: the plan as approved before this was built.
 - `docs/deployment-architecture.md`: what is deployed and how it fits together.
 - `docs/operator-guide.md`: the how for an administrator: accounts, deploys, logs, secrets, DNS, costs.
+- `docs/INFRA.md`: what the backend requires of its infrastructure, per config section.
 - The backend's own ADR 0022 records the deployment shape from its side.
 
 ## Layout
@@ -16,14 +18,15 @@ and a budget alert, all in `us-east-2` (Ohio).
 bin/crewreg.ts          CDK app: picks the environment, builds the three stacks
 lib/config.ts           validated per-environment settings from cdk.json
 lib/data-stack.ts       VPC, RDS Postgres, the three secrets
-lib/app-stack.ts        instance, security groups, EIP, bucket, deploy role, budget
+lib/app-stack.ts        instance, security groups, EIP, buckets, SES identity, deploy role, budget
 lib/github-oidc-stack.ts  the account-level GitHub Actions OIDC provider
-lib/dns-stack.ts        the Route 53 hosted zone for the domain (retained on destroy)
+lib/dns-stack.ts        the Route 53 hosted zone for the domain, when this app creates it
 lib/user-data.ts        renders the first-boot script from instance/
 lib/nag-suppressions.ts cdk-nag findings accepted on purpose, with reasons
 instance/               files installed on the box (bootstrap, deploy script, units, Caddyfile)
 scripts/deploy.sh       deploy from a laptop (same contract as the GitHub button)
 scripts/set-llm-key.sh  put the real LLM API key into <env>/llm, once
+scripts/set-bff-key.sh  mint the frontend/backend shared key into <env>/auth and the Amplify app, once
 scripts/admin.sh        run the backend's operator-only account commands on the instance
 test/                   CDK assertion tests + the cdk-nag gate
 ```
@@ -40,10 +43,14 @@ test/                   CDK assertion tests + the cdk-nag gate
 ## First-time setup for an environment
 
 1. **Fill in `cdk.json`.** Under `context.crewreg.dev` set `apiHost` (the API
-   hostname on your domain, e.g. `api.example.com`), `acmeEmail` (Let's
-   Encrypt notices), `budgetEmail`, and `corsAllowedOrigins` (the Amplify URL,
-   later your custom frontend domain). Everything else has sensible defaults.
-   Nothing in this file is secret.
+   hostname on your domain, e.g. `api.example.com`), `frontendOrigin` (where
+   the frontend is served, e.g. `https://app.example.com`; public links are
+   composed under it), `mailFrom` (the SES sender, e.g. `no-reply@example.com`,
+   inside the hosted zone), `acmeEmail` (Let's Encrypt notices), `budgetEmail`,
+   and `corsAllowedOrigins` (the frontend origin). For a domain whose Route 53
+   zone already exists, set `hostedZoneName` and `hostedZoneId` and the zone is
+   imported; with `hostedZoneName` alone the `crewreg-dns` stack creates it.
+   Everything else has sensible defaults. Nothing in this file is secret.
 2. **Check and deploy.**
    ```bash
    npm test                      # assertions + cdk-nag gate
@@ -54,19 +61,23 @@ test/                   CDK assertion tests + the cdk-nag gate
    up once and cached in `cdk.context.json`; commit that file.
    If the account already has a GitHub OIDC provider, add
    `-c crewreg:createGithubOidcProvider=false`.
-3. **Point the domain at Route 53.** The `crewreg-dns` stack creates the
-   hosted zone for `hostedZoneName` and outputs `NameServers`. In Namecheap,
-   Domain List, Manage, Nameservers, choose Custom DNS and enter those four
-   names. The API's `A` record is already in the zone; Caddy requests the
-   certificate as soon as the nameserver change propagates (minutes to a few
-   hours) and retries until it does. Amplify's custom domain for the frontend
-   goes into the same zone, which the Amplify console does on its own.
-   Without `hostedZoneName` in `cdk.json` the record is yours to add at the
-   registrar, pointing at the `ElasticIp` output.
-4. **Set the LLM API key.** The `dev/llm` secret was created with the provider
-   and model names and a placeholder key.
+3. **Point the domain at Route 53.** When the `crewreg-dns` stack creates the
+   zone it outputs `NameServers`; at the registrar choose custom DNS and enter
+   those four names. An imported zone is already delegated. The API's `A`
+   record and the SES DKIM records are in the zone; Caddy requests the
+   certificate as soon as the name resolves and retries until it does, and
+   SES verifies the sender domain within minutes (`aws sesv2 get-email-identity
+   --email-identity <domain>` shows `VerifiedForSendingStatus`). Amplify's
+   custom domain for the frontend goes into the same zone, which Amplify does
+   on its own. Without `hostedZoneName` in `cdk.json` the `A` record and the
+   three `MailDkimRecord` outputs are yours to add at the registrar.
+4. **Set the LLM API key and the BFF key.** The `dev/llm` secret was created
+   with the provider and model names and a placeholder key; `dev/auth` holds
+   the session signing key but not yet the key the frontend uses to vouch for
+   a visitor's address.
    ```bash
-   scripts/set-llm-key.sh dev        # prompts for the key, restarts the service
+   scripts/set-llm-key.sh dev                       # prompts for the key, restarts the service
+   scripts/set-bff-key.sh dev <amplify-app-id>      # mints the key into dev/auth and the Amplify app, restarts both
    ```
 5. **Wire the GitHub button.** In the backend repo, create a GitHub Environment
    named `dev` (Settings > Environments) with four **variables** taken from the
@@ -109,9 +120,11 @@ test/                   CDK assertion tests + the cdk-nag gate
   CLI), then restart the service. Do not change the `llm` block in `cdk.json`
   for a deployed environment: it only seeds the secret at creation, and a
   changed template regenerates the secret and wipes the real key.
-- **Change CORS origins or extract tunables:** edit `cdk.json`, `npx cdk
-  deploy crewreg-dev-app`. That rewrites the bootstrap, so the instance is
-  replaced (a few minutes of downtime) and comes back on the last release.
+- **Change CORS origins, the frontend origin, the mail sender or extract
+  tunables:** edit `cdk.json`, `npx cdk deploy crewreg-dev-app`. That rewrites
+  the bootstrap, so the instance is replaced (a few minutes of downtime) and
+  comes back on the last release. A new sender domain also means a new SES
+  identity, which must verify before the backend will boot.
 - **Replace a sick instance:** `npx cdk deploy crewreg-dev-app` after any
   change to `instance/`, or terminate it in the console and re-run the deploy;
   the Elastic IP follows the new instance.
@@ -143,9 +156,10 @@ npx cdk destroy crewreg-dev-app      # instance, EIP, role, budget, log groups
 npx cdk destroy crewreg-dev-data     # RDS takes a final snapshot; secrets are scheduled for deletion
 ```
 
-The artifacts bucket is retained on purpose; empty and delete it by hand if
-the environment is gone for good. The final RDS snapshot and the deleted
-secrets (recoverable for 30 days) are also yours to clean up.
+The artifacts bucket and the CV bucket are retained on purpose; empty and
+delete them by hand if the environment is gone for good (the CV bucket holds
+personal data, so that is a decision, not a chore). The final RDS snapshot and
+the deleted secrets (recoverable for 30 days) are also yours to clean up.
 
 ## A second environment
 

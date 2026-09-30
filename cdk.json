@@ -19,13 +19,16 @@
     "crewreg": {
       "dev": {
         "region": "us-east-2",
-        "apiHost": "api-dev.aucto.io",
-        "hostedZoneName": "aucto.io",
+        "apiHost": "api-dev.trynilla.com",
+        "hostedZoneName": "trynilla.com",
+        "hostedZoneId": "Z04086442AMPWSPJV0TW2",
+        "frontendOrigin": "https://app.trynilla.com",
+        "mailFrom": "no-reply@trynilla.com",
         "acmeEmail": "mattkhoo1234@gmail.com",
         "budgetEmail": "mattkhoo1234@gmail.com",
         "budgetUsd": 40,
         "corsAllowedOrigins": [
-          "https://app.aucto.io"
+          "https://app.trynilla.com"
         ],
         "githubRepo": "mattkhoo-wg/shipping-backend",
         "instanceType": "t3.micro",
