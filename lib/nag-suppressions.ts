@@ -58,7 +58,7 @@ function suppressAppStack(stack: AppStack): void {
 
   NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/InstanceRole`, [
     { id: 'AwsSolutions-IAM4', reason: 'AmazonSSMManagedInstanceCore is the AWS-maintained policy for Session Manager and Run Command; hand-copying it would drift.' },
-    { id: 'AwsSolutions-IAM5', reason: 'Releases are read under the server/* prefix of one private bucket, CVs are written and read under every key of the private CV bucket (the backend mints the keys), and logs:DescribeLogGroups has no resource-level permission.' },
+    { id: 'AwsSolutions-IAM5', reason: 'Releases are read under the server/* prefix of one private bucket, CVs are written and read under every key of the private CV bucket (the backend mints the keys), mail is sent to any SES identity because the sandbox makes every recipient one (the From address is pinned by condition), and logs:DescribeLogGroups has no resource-level permission.' },
   ], true);
 
   NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/GithubDeployRole`, [

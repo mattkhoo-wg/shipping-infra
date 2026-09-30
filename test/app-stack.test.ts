@@ -168,8 +168,11 @@ describe('AppStack', () => {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
+            Sid: 'SendMailAsSender',
             Action: ['ses:SendEmail', 'ses:SendRawEmail'],
-            Resource: Match.objectLike({ 'Fn::Join': Match.arrayWith([Match.arrayWith([Match.stringLikeRegexp(':ses:ap-south-1:123456789012:identity/')])]) }),
+            // Recipients are identities too in the sandbox, so the resource is every identity; the sender is fixed by condition.
+            Resource: Match.objectLike({ 'Fn::Join': Match.arrayWith([Match.arrayWith([Match.stringLikeRegexp(':ses:ap-south-1:123456789012:identity/\\*$')])]) }),
+            Condition: { StringEquals: { 'ses:FromAddress': 'no-reply@example.com' } },
           }),
           Match.objectLike({
             Sid: 'CheckMailIdentity',
