@@ -73,10 +73,49 @@ describe('AppStack', () => {
     });
   });
 
+  test('imports an existing zone by id instead of creating one, and writes the A record there', () => {
+    const imported = synthesizeEnvironment({ hostedZoneId: 'Z04086442AMPWSPJV0TW2' });
+    expect(imported.dns).toBeUndefined();
+    const t = Template.fromStack(imported.appStack);
+    t.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'api.example.com.', Type: 'A', HostedZoneId: 'Z04086442AMPWSPJV0TW2' });
+    t.resourceCountIs('AWS::Route53::HostedZone', 0);
+    expect(JSON.stringify(t.toJSON())).not.toContain('crewreg-dns');
+  });
+
   test('leaves DNS to the registrar when no hosted zone is configured', () => {
     const manual = synthesizeEnvironment({ hostedZoneName: undefined });
     Template.fromStack(manual.appStack).resourceCountIs('AWS::Route53::RecordSet', 0);
     Template.fromStack(manual.appStack).hasOutput('ElasticIp', { Description: Match.stringLikeRegexp('Point the A record') });
+  });
+
+  test('keeps CVs in a private, TLS-only bucket that survives destroy', () => {
+    template.resourceCountIs('AWS::S3::Bucket', 2);
+    const cv = Object.entries(template.findResources('AWS::S3::Bucket')).find(([id]) => id.startsWith('CvDocuments'));
+    expect(cv).toBeDefined();
+    const [, resource] = cv!;
+    expect(resource.DeletionPolicy).toBe('Retain');
+    expect(resource.Properties.PublicAccessBlockConfiguration).toEqual({ BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true });
+    expect(resource.Properties.BucketEncryption).toBeDefined();
+    template.hasOutput('CvBucket', { Value: { Ref: Match.stringLikeRegexp('^CvDocuments') } });
+  });
+
+  test('creates the SES domain identity for the sender and writes its DKIM records into the zone', () => {
+    template.hasResourceProperties('AWS::SES::EmailIdentity', { EmailIdentity: 'example.com' });
+    const dkim = Object.values(template.findResources('AWS::Route53::RecordSet', { Properties: { Type: 'CNAME' } }));
+    expect(dkim).toHaveLength(3);
+    for (const record of dkim) {
+      expect(JSON.stringify(record.Properties.Name)).toContain('DkimDNSTokenName');
+      expect(JSON.stringify(record.Properties.ResourceRecords)).toContain('DkimDNSTokenValue');
+    }
+    template.hasOutput('MailIdentityName', { Value: { Ref: Match.stringLikeRegexp('^MailIdentity') } });
+  });
+
+  test('outputs the DKIM records for the registrar when there is no zone', () => {
+    const manual = Template.fromStack(synthesizeEnvironment({ hostedZoneName: undefined }).appStack);
+    manual.resourceCountIs('AWS::Route53::RecordSet', 0);
+    for (const n of [1, 2, 3]) {
+      manual.hasOutput(`MailDkimRecord${n}`, { Description: Match.stringLikeRegexp('registrar') });
+    }
   });
 
   test('keeps releases in a private, versioned, TLS-only bucket that survives destroy', () => {
@@ -112,9 +151,35 @@ describe('AppStack', () => {
     });
     const policies = template.findResources('AWS::IAM::Policy');
     const instancePolicy = Object.values(policies).find((p) => String(p.Properties?.PolicyName).includes('InstanceRoleDefaultPolicy'));
+    const statements = instancePolicy?.Properties?.PolicyDocument?.Statement as Array<{ Action: string | string[]; Resource: unknown }>;
+    const withPut = statements.filter((s) => JSON.stringify(s.Action).includes('s3:PutObject'));
+    expect(withPut).toHaveLength(1);
+    expect(JSON.stringify(withPut[0].Resource)).toContain('CvDocuments');
+    expect(JSON.stringify(withPut[0].Resource)).not.toContain('Artifacts');
     const actions = JSON.stringify(instancePolicy?.Properties?.PolicyDocument);
-    expect(actions).not.toContain('s3:PutObject');
+    expect(actions).not.toContain('s3:DeleteObject');
     expect(actions).not.toContain('ssm:SendCommand');
+  });
+
+  test('lets the instance send mail as its identity and check that identity, nothing more in SES', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyName: Match.stringLikeRegexp('InstanceRoleDefaultPolicy'),
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: ['ses:SendEmail', 'ses:SendRawEmail'],
+            Resource: Match.objectLike({ 'Fn::Join': Match.arrayWith([Match.arrayWith([Match.stringLikeRegexp(':ses:ap-south-1:123456789012:identity/')])]) }),
+          }),
+          Match.objectLike({
+            Sid: 'CheckMailIdentity',
+            Action: 'ses:GetEmailIdentity',
+            Resource: Match.arrayWith([Match.objectLike({ 'Fn::Join': Match.arrayWith([Match.arrayWith([Match.stringLikeRegexp('identity/no-reply@example.com')])]) })]),
+          }),
+        ]),
+      },
+    });
+    const instancePolicy = Object.values(template.findResources('AWS::IAM::Policy')).find((p) => String(p.Properties?.PolicyName).includes('InstanceRoleDefaultPolicy'));
+    expect(JSON.stringify(instancePolicy?.Properties?.PolicyDocument)).not.toContain('"ses:*"');
   });
 
   test('creates the GitHub deploy role trusting one repository and one environment', () => {
@@ -187,7 +252,7 @@ describe('AppStack', () => {
   });
 
   test('outputs everything the GitHub environment and the DNS record need', () => {
-    for (const name of ['ElasticIp', 'ApiHost', 'ArtifactsBucket', 'DeployRoleArn', 'Region', 'InstanceId', 'SessionCommand']) {
+    for (const name of ['ElasticIp', 'ApiHost', 'ArtifactsBucket', 'CvBucket', 'MailIdentityName', 'DeployRoleArn', 'Region', 'InstanceId', 'SessionCommand']) {
       template.hasOutput(name, Match.anyValue());
     }
     template.hasOutput('ApiHost', { Value: 'api.example.com' });

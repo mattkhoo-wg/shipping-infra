@@ -10,6 +10,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as ses from 'aws-cdk-lib/aws-ses';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 
@@ -23,8 +24,8 @@ export interface AppStackProps extends cdk.StackProps {
   readonly vpc: ec2.IVpc;
   readonly databaseSecurityGroup: ec2.ISecurityGroup;
   readonly secrets: BackendSecrets;
-  /** When present, the API's A record is written here instead of by hand at the registrar. */
-  readonly hostedZone?: route53.IHostedZone;
+  /** The zone the dns stack created; ignored when `config.hostedZoneId` imports one instead. */
+  readonly hostedZone?: route53.IPublicHostedZone;
 }
 
 /** Caddy release installed on the instance. Bump deliberately; it replaces the instance. */
@@ -46,9 +47,17 @@ export function deployDocumentName(envName: string): string {
   return `crewreg-${envName}-deploy`;
 }
 
+/** The bare address inside a validated `mailFrom` (`Name <a@b>` or `a@b`). */
+function mailFromAddress(mailFrom: string): string {
+  const angle = /<([^<>]+)>\s*$/.exec(mailFrom);
+  return (angle?.[1] ?? mailFrom).trim();
+}
+
 export class AppStack extends cdk.Stack {
   readonly instance: ec2.Instance;
   readonly artifactsBucket: s3.Bucket;
+  readonly cvBucket: s3.Bucket;
+  readonly mailIdentity: ses.EmailIdentity;
   readonly deployRole: iam.Role;
   readonly deployDocument: ssm.CfnDocument;
 
@@ -56,6 +65,7 @@ export class AppStack extends cdk.Stack {
     super(scope, id, props);
     const { config, vpc, secrets } = props;
     const env = config.envName;
+    const hostedZone = this.resolveHostedZone(props);
 
     // Releases. Versioned so an overwritten `server/current` pointer can be
     // recovered; old object versions age out after a month. Retained on
@@ -69,6 +79,17 @@ export class AppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       lifecycleRules: [{ noncurrentVersionExpiration: cdk.Duration.days(30) }],
     });
+
+    // Every uploaded CV (ADR 0028), never deleted (ADR 0038): retained because
+    // its contents cannot be rebuilt.
+    this.cvBucket = new s3.Bucket(this, 'CvDocuments', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    this.mailIdentity = this.createMailIdentity(config, hostedZone);
 
     // Log groups are created here so retention is managed; the agent would
     // otherwise create them with no expiry.
@@ -106,11 +127,12 @@ export class AppStack extends cdk.Stack {
     });
 
     // What the process on the box may do. Read its three secrets, read
-    // releases, be an SSM managed node, ship logs. Nothing else.
+    // releases, write and read CVs, send mail as its identity, be an SSM
+    // managed node, ship logs. Nothing else: no delete on CVs (ADR 0038).
     const instanceRole = new iam.Role(this, 'InstanceRole', {
       roleName: `crewreg-${env}-api-instance`,
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-      description: `crewreg ${env} API instance: read secrets and releases, SSM, CloudWatch logs`,
+      description: `crewreg ${env} API instance: read secrets and releases, archive CVs, send mail, SSM, CloudWatch logs`,
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
@@ -119,6 +141,18 @@ export class AppStack extends cdk.Stack {
     secrets.auth.grantRead(instanceRole);
     secrets.llm.grantRead(instanceRole);
     this.artifactsBucket.grantRead(instanceRole, `${RELEASE_PREFIX}*`);
+    this.cvBucket.grantRead(instanceRole);
+    this.cvBucket.grantPut(instanceRole);
+    this.mailIdentity.grantSendEmail(instanceRole);
+    // The boot check falls back from the domain identity to the address itself.
+    instanceRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CheckMailIdentity',
+      actions: ['ses:GetEmailIdentity'],
+      resources: [
+        this.mailIdentity.emailIdentityArn,
+        this.formatArn({ service: 'ses', resource: 'identity', resourceName: mailFromAddress(config.mailFrom) }),
+      ],
+    }));
     serverLogGroup.grantWrite(instanceRole);
     caddyLogGroup.grantWrite(instanceRole);
     instanceRole.addToPolicy(new iam.PolicyStatement({
@@ -130,6 +164,7 @@ export class AppStack extends cdk.Stack {
     const userData = ec2.UserData.custom(renderUserData({
       config,
       artifactsBucket: this.artifactsBucket.bucketName,
+      cvBucket: this.cvBucket.bucketName,
       serverLogGroup: serverLogGroup.logGroupName,
       caddyLogGroup: caddyLogGroup.logGroupName,
       caddyVersion: CADDY_VERSION,
@@ -190,11 +225,11 @@ export class AppStack extends cdk.Stack {
       instanceId: this.instance.instanceId,
     });
 
-    if (props.hostedZone !== undefined) {
+    if (hostedZone !== undefined) {
       // Short TTL: the address only changes when the instance is replaced,
       // but when it does, five minutes of stale answers is the outage budget.
       new route53.ARecord(this, 'ApiRecord', {
-        zone: props.hostedZone,
+        zone: hostedZone,
         recordName: `${config.apiHost}.`,
         target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
         ttl: cdk.Duration.minutes(5),
@@ -208,12 +243,14 @@ export class AppStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ElasticIp', {
       value: eip.attrPublicIp,
-      description: props.hostedZone !== undefined
+      description: hostedZone !== undefined
         ? `Address of ${config.apiHost}; the A record is managed in Route 53`
         : `Point the A record for ${config.apiHost} at this address`,
     });
     new cdk.CfnOutput(this, 'ApiHost', { value: config.apiHost, description: 'GitHub environment variable API_HOST' });
     new cdk.CfnOutput(this, 'ArtifactsBucket', { value: this.artifactsBucket.bucketName, description: 'GitHub environment variable ARTIFACTS_BUCKET' });
+    new cdk.CfnOutput(this, 'CvBucket', { value: this.cvBucket.bucketName, description: 'storage.bucket in the backend config; every uploaded CV' });
+    new cdk.CfnOutput(this, 'MailIdentityName', { value: this.mailIdentity.emailIdentityName, description: `SES identity ${config.mailFrom} sends as; must be verified before the backend boots` });
     new cdk.CfnOutput(this, 'DeployRoleArn', { value: this.deployRole.roleArn, description: 'GitHub environment variable AWS_ROLE_ARN' });
     new cdk.CfnOutput(this, 'Region', { value: config.region, description: 'GitHub environment variable AWS_REGION' });
     new cdk.CfnOutput(this, 'DeployDocument', { value: deployDocumentName(env), description: 'SSM document the deploy role may send (derived from the environment name)' });
@@ -222,6 +259,38 @@ export class AppStack extends cdk.Stack {
       value: `aws ssm start-session --region ${config.region} --target ${this.instance.instanceId}`,
       description: 'Shell on the instance (no SSH)',
     });
+  }
+
+  private resolveHostedZone(props: AppStackProps): route53.IPublicHostedZone | undefined {
+    const { hostedZoneName, hostedZoneId } = props.config;
+    if (hostedZoneName !== undefined && hostedZoneId !== undefined) {
+      return route53.PublicHostedZone.fromPublicHostedZoneAttributes(this, 'Zone', { hostedZoneId, zoneName: hostedZoneName });
+    }
+    return props.hostedZone;
+  }
+
+  /** The SES domain identity the backend sends from, with its DKIM records in the zone or as outputs. */
+  private createMailIdentity(config: EnvironmentConfig, hostedZone?: route53.IPublicHostedZone): ses.EmailIdentity {
+    const identity = new ses.EmailIdentity(this, 'MailIdentity', {
+      identity: ses.Identity.domain(config.mailDomain),
+    });
+    identity.dkimRecords.forEach((record, i) => {
+      if (hostedZone !== undefined) {
+        new route53.CnameRecord(this, `MailDkim${i + 1}`, {
+          zone: hostedZone,
+          recordName: record.name,
+          domainName: record.value,
+          ttl: cdk.Duration.hours(1),
+          comment: `crewreg ${config.envName}: SES DKIM for ${config.mailDomain}`,
+        });
+      } else {
+        new cdk.CfnOutput(this, `MailDkimRecord${i + 1}`, {
+          value: `${record.name} CNAME ${record.value}`,
+          description: `Add this record at the registrar so SES can verify ${config.mailDomain}`,
+        });
+      }
+    });
+    return identity;
   }
 
   /**

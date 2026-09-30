@@ -27,6 +27,8 @@ export interface UserDataParams {
   readonly config: EnvironmentConfig;
   /** Name of the artifacts bucket the instance pulls releases from. */
   readonly artifactsBucket: string;
+  /** Name of the bucket the backend archives CVs to (`storage.bucket`). */
+  readonly cvBucket: string;
   /** CloudWatch log group names. Created by the app stack so retention is managed. */
   readonly serverLogGroup: string;
   readonly caddyLogGroup: string;
@@ -49,7 +51,7 @@ interface InstalledFile {
 export function renderUserData(params: UserDataParams): string {
   const values = placeholderValues(params);
   const files: InstalledFile[] = [
-    { path: '/etc/crewreg/config.yaml', content: renderConfigYaml(params.config), mode: '0640' },
+    { path: '/etc/crewreg/config.yaml', content: renderConfigYaml(params.config, params.cvBucket), mode: '0640' },
     { path: '/etc/crewreg/deploy.env', content: renderDeployEnv(params), mode: '0640' },
     { path: '/etc/crewreg/cloudwatch-agent.json', content: template('cloudwatch-agent.json', values), mode: '0644' },
     { path: '/etc/systemd/system/crewreg.service', content: template('crewreg.service', values), mode: '0644' },
@@ -81,7 +83,7 @@ export function renderUserData(params: UserDataParams): string {
  * and `auth` sections are omitted on purpose: the loader replaces them from
  * Secrets Manager (`<env>/<section>`) and would ignore anything written here.
  */
-export function renderConfigYaml(config: EnvironmentConfig): string {
+export function renderConfigYaml(config: EnvironmentConfig, cvBucket: string): string {
   const origins = config.corsAllowedOrigins.length === 0
     ? '  allowed_origins: []'
     : ['  allowed_origins:', ...config.corsAllowedOrigins.map((o) => `    - ${o}`)].join('\n');
@@ -97,6 +99,13 @@ export function renderConfigYaml(config: EnvironmentConfig): string {
     `  max_vision_pages: ${config.extract.maxVisionPages}`,
     'cors:',
     origins,
+    'storage:',
+    `  bucket: ${cvBucket}`,
+    'mail:',
+    '  provider: ses',
+    `  from: "${config.mailFrom}"`,
+    'public:',
+    `  base_url: ${config.frontendOrigin}`,
     '',
   ].join('\n');
 }

@@ -40,9 +40,11 @@ const createOidc = app.node.tryGetContext('crewreg:createGithubOidcProvider') !=
 const oidc = createOidc ? new GithubOidcStack(app, 'crewreg-github-oidc', { env }) : undefined;
 
 // The hosted zone is account-level like the OIDC provider: one zone, every
-// environment writes its own records into it.
-const dns = config.hostedZoneName !== undefined
-  ? new DnsStack(app, 'crewreg-dns', { env, zoneName: config.hostedZoneName, description: `crewreg: Route 53 hosted zone for ${config.hostedZoneName}` })
+// environment writes its own records into it. A zone that already exists
+// (hostedZoneId set) is imported by the app stack instead of created here.
+const createZone = config.hostedZoneName !== undefined && config.hostedZoneId === undefined;
+const dns = createZone
+  ? new DnsStack(app, 'crewreg-dns', { env, zoneName: config.hostedZoneName!, description: `crewreg: Route 53 hosted zone for ${config.hostedZoneName}` })
   : undefined;
 
 const data = new DataStack(app, `crewreg-${envName}-data`, {

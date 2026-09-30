@@ -58,19 +58,24 @@ function suppressAppStack(stack: AppStack): void {
 
   NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/InstanceRole`, [
     { id: 'AwsSolutions-IAM4', reason: 'AmazonSSMManagedInstanceCore is the AWS-maintained policy for Session Manager and Run Command; hand-copying it would drift.' },
-    { id: 'AwsSolutions-IAM5', reason: 'Releases are read under the server/* prefix of one private bucket, and logs:DescribeLogGroups has no resource-level permission.' },
+    { id: 'AwsSolutions-IAM5', reason: 'Releases are read under the server/* prefix of one private bucket, CVs are written and read under every key of the private CV bucket (the backend mints the keys), and logs:DescribeLogGroups has no resource-level permission.' },
   ], true);
 
   NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/GithubDeployRole`, [
     { id: 'AwsSolutions-IAM5', reason: 'The deploy role may write releases under server/* only, may send one fixed-content SSM document (the deploy script) to instances carrying this environment tag only, and reads command results, which has no resource-level permission.' },
   ], true);
 
+  NagSuppressions.addResourceSuppressions(stack.cvBucket, [
+    { id: 'AwsSolutions-S1', reason: 'Only the instance role can reach the CV bucket and every access is a backend request Caddy already logs; access logging would be a second bucket for the same trail.' },
+  ]);
+
   // Bucket notifications / auto-delete handlers are not used, but the S3 L2
   // still emits a policy statement with a wildcard for the SSL-only condition.
-  NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/Artifacts/Policy`, [
-    { id: 'AwsSolutions-IAM5', reason: 'The bucket policy denies non-TLS access to every object, which needs the object wildcard.' },
-  ], true);
-
+  for (const bucket of ['Artifacts', 'CvDocuments']) {
+    NagSuppressions.addResourceSuppressionsByPath(stack, `/${stack.stackName}/${bucket}/Policy`, [
+      { id: 'AwsSolutions-IAM5', reason: 'The bucket policy denies non-TLS access to every object, which needs the object wildcard.' },
+    ], true);
+  }
 }
 
 /**

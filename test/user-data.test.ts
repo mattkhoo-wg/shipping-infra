@@ -4,6 +4,7 @@ import { TEST_CONFIG } from './helpers';
 const params = {
   config: TEST_CONFIG,
   artifactsBucket: 'crewreg-dev-artifacts-abc123',
+  cvBucket: 'crewreg-dev-cvdocuments-def456',
   serverLogGroup: '/crewreg/dev/server',
   caddyLogGroup: '/crewreg/dev/caddy',
   caddyVersion: '2.11.4',
@@ -11,12 +12,15 @@ const params = {
 
 describe('renderConfigYaml', () => {
   test('writes only the non-secret sections', () => {
-    const yaml = renderConfigYaml(TEST_CONFIG);
+    const yaml = renderConfigYaml(TEST_CONFIG, 'crewreg-dev-cvdocuments-def456');
 
     expect(yaml).toContain('environment: dev\n');
     expect(yaml).toContain('region: ap-south-1\n');
     expect(yaml).toContain('extract:\n  min_text_chars: 100\n  vision_dpi: 150\n  max_vision_pages: 8\n');
     expect(yaml).toContain('cors:\n  allowed_origins:\n    - https://main.d1234567890abc.amplifyapp.com\n    - https://app.example.com\n');
+    expect(yaml).toContain('storage:\n  bucket: crewreg-dev-cvdocuments-def456\n');
+    expect(yaml).toContain('mail:\n  provider: ses\n  from: "Crewreg <no-reply@example.com>"\n');
+    expect(yaml).toContain('public:\n  base_url: https://app.example.com\n');
     expect(yaml).not.toMatch(/^llm:/m);
     expect(yaml).not.toMatch(/^database:/m);
     expect(yaml).not.toMatch(/^auth:/m);
@@ -24,7 +28,7 @@ describe('renderConfigYaml', () => {
   });
 
   test('renders an empty origin list as an explicit empty array', () => {
-    const yaml = renderConfigYaml({ ...TEST_CONFIG, corsAllowedOrigins: [] });
+    const yaml = renderConfigYaml({ ...TEST_CONFIG, corsAllowedOrigins: [] }, 'bucket');
 
     expect(yaml).toContain('cors:\n  allowed_origins: []\n');
   });
@@ -52,6 +56,7 @@ describe('renderUserData', () => {
   test('writes the config file, the Caddyfile and the deploy environment', () => {
     expect(script).toContain("cat > '/etc/crewreg/config.yaml' <<'__CREWREG_FILE__'");
     expect(script).toContain('environment: dev');
+    expect(script).toContain('  bucket: crewreg-dev-cvdocuments-def456');
     expect(script).toContain("cat > '/etc/caddy/Caddyfile' <<'__CREWREG_FILE__'");
     expect(script).toContain('email ops@example.com');
     expect(script).toContain('\napi.example.com {');
