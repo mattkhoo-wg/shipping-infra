@@ -104,7 +104,8 @@ describe('AppStack', () => {
     const dkim = Object.values(template.findResources('AWS::Route53::RecordSet', { Properties: { Type: 'CNAME' } }));
     expect(dkim).toHaveLength(3);
     for (const record of dkim) {
-      expect(JSON.stringify(record.Properties.Name)).toContain('DkimDNSTokenName');
+      // SES returns the full name; a zone suffix appended on top would never verify.
+      expect(Match.exact({ 'Fn::Join': ['', [{ 'Fn::GetAtt': [Match.stringLikeRegexp('^MailIdentity'), Match.stringLikeRegexp('^DkimDNSTokenName')] }, '.']] }).test(record.Properties.Name).hasFailed()).toBe(false);
       expect(JSON.stringify(record.Properties.ResourceRecords)).toContain('DkimDNSTokenValue');
     }
     template.hasOutput('MailIdentityName', { Value: { Ref: Match.stringLikeRegexp('^MailIdentity') } });
