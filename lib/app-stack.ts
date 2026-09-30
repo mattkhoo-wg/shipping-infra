@@ -143,7 +143,15 @@ export class AppStack extends cdk.Stack {
     this.artifactsBucket.grantRead(instanceRole, `${RELEASE_PREFIX}*`);
     this.cvBucket.grantRead(instanceRole);
     this.cvBucket.grantPut(instanceRole);
-    this.mailIdentity.grantSendEmail(instanceRole);
+    // SES authorises a send against every identity the message touches: the
+    // sender's and, in the sandbox, each verified recipient's. The condition
+    // keeps it to one sender.
+    instanceRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SendMailAsSender',
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: [this.formatArn({ service: 'ses', resource: 'identity', resourceName: '*' })],
+      conditions: { StringEquals: { 'ses:FromAddress': mailFromAddress(config.mailFrom) } },
+    }));
     // The boot check falls back from the domain identity to the address itself.
     instanceRole.addToPolicy(new iam.PolicyStatement({
       sid: 'CheckMailIdentity',
