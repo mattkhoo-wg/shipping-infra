@@ -278,7 +278,8 @@ export class AppStack extends cdk.Stack {
       if (hostedZone !== undefined) {
         new route53.CnameRecord(this, `MailDkim${i + 1}`, {
           zone: hostedZone,
-          recordName: record.name,
+          // SES hands back a fully qualified name; the trailing dot stops CDK appending the zone again.
+          recordName: `${record.name}.`,
           domainName: record.value,
           ttl: cdk.Duration.hours(1),
           comment: `crewreg ${config.envName}: SES DKIM for ${config.mailDomain}`,
